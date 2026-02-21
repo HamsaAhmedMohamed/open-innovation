@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 const LIDL_COLORS = {
   blue: '#0050AA',
@@ -16,27 +16,21 @@ const FUN_FACTS = [
   "Did you know? Spices can boost your metabolism naturally! 🌶️"
 ];
 
-const MOCK_RECIPE = {
-  name: "Creamy Tomato Pasta with Basil",
-  emoji: "🍝",
-  ingredients: [
-    { name: "Pasta 500g", product: "Lidl Favorit Pasta", price: 12.95, onSale: true },
-    { name: "Cherry Tomatoes 250g", product: "Lidl Organic Tomatoes", price: 15.50, onSale: false },
-    { name: "Cream 200ml", product: "Milsani Cooking Cream", price: 8.95, onSale: true },
-    { name: "Garlic (3 cloves)", product: "Fresh Garlic Pack", price: 6.50, onSale: false },
-    { name: "Fresh Basil", product: "Lidl Fresh Herbs", price: 9.95, onSale: true },
-    { name: "Parmesan Cheese 100g", product: "Lovilio Parmesan", price: 16.95, onSale: false }
-  ],
-  steps: [
-    "Boil pasta according to package instructions in salted water.",
-    "Sauté minced garlic in olive oil until fragrant, then add halved cherry tomatoes.",
-    "Once tomatoes soften, add cream and simmer for 3-4 minutes.",
-    "Drain pasta and toss with the creamy tomato sauce.",
-    "Garnish with fresh basil leaves and grated parmesan. Enjoy!"
-  ],
-  totalCost: 70.80,
-  savings: 18.00
-};
+function FloatingEmoji({ emoji, delay, duration = 800 }) {
+  const left = Math.random() * 100;
+  return (
+    <div
+      className="float-up-fade absolute text-xl pointer-events-none"
+      style={{
+        left: `${left}%`,
+        animationDelay: `${delay}ms`,
+        animationDuration: `${duration}ms`,
+      }}
+    >
+      {emoji}
+    </div>
+  );
+}
 
 function App() {
   const [screen, setScreen] = useState('input');
@@ -44,12 +38,14 @@ function App() {
   const [budget, setBudget] = useState(75);
   const [ingredients, setIngredients] = useState([]);
   const [inputValue, setInputValue] = useState('');
-  const [selectedIngredients, setSelectedIngredients] = useState(
-    MOCK_RECIPE.ingredients.map((_, i) => i)
-  );
+  const [recipe, setRecipe] = useState(null);
+  const [selectedIngredients, setSelectedIngredients] = useState([]);
   const [showToast, setShowToast] = useState(false);
   const [factIndex, setFactIndex] = useState(0);
   const [isSpinning, setIsSpinning] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [floatingEmojis, setFloatingEmojis] = useState([]);
 
   const handleAddIngredient = (e) => {
     if (e.key === 'Enter' || e.key === ',') {
@@ -66,40 +62,70 @@ function App() {
     setIngredients(ingredients.filter(i => i !== ingredient));
   };
 
-  const handleFindRecipe = () => {
-    setScreen('loading');
-    let factTimer;
-
-    factTimer = setInterval(() => {
-      setFactIndex(prev => (prev + 1) % FUN_FACTS.length);
-    }, 800);
-
-    setTimeout(() => {
-      clearInterval(factTimer);
-      setScreen('result');
-    }, 2500);
-  };
-
-  const handleSurpriseMe = () => {
-    setIsSpinning(true);
-    setTimeout(() => {
-      setIsSpinning(false);
+  const callRecipeAPI = async (budgetVal, ingredientsList, isSurpriseMe) => {
+    try {
+      setError(null);
+      setLoading(true);
       setScreen('loading');
 
       let factTimer = setInterval(() => {
         setFactIndex(prev => (prev + 1) % FUN_FACTS.length);
       }, 800);
 
+      const response = await fetch('/api/recipe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          budget: budgetVal,
+          ingredients: ingredientsList,
+          surpriseMe: isSurpriseMe,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to fetch recipe');
+      }
+
+      const data = await response.json();
+      setRecipe(data);
+      setSelectedIngredients(data.ingredients.map((_, i) => i));
+
       setTimeout(() => {
         clearInterval(factTimer);
+        setLoading(false);
         setScreen('result');
       }, 2500);
+    } catch (err) {
+      clearInterval();
+      setError('Oops, our chef is taking a break! 🍳 Try again.');
+      setLoading(false);
+      setScreen('input');
+      console.error('API Error:', err);
+    }
+  };
+
+  const handleFindRecipe = () => {
+    callRecipeAPI(budgetEnabled ? budget : null, ingredients, false);
+  };
+
+  const handleSurpriseMe = () => {
+    setIsSpinning(true);
+    setTimeout(() => {
+      setIsSpinning(false);
+      callRecipeAPI(null, [], true);
     }, 800);
   };
 
   const handleAddToList = () => {
+    setFloatingEmojis([
+      { id: 1, emoji: '🎉', delay: 0 },
+      { id: 2, emoji: '✨', delay: 100 },
+      { id: 3, emoji: '🎉', delay: 200 },
+      { id: 4, emoji: '✨', delay: 300 },
+    ]);
     setShowToast(true);
     setTimeout(() => setShowToast(false), 2500);
+    setTimeout(() => setFloatingEmojis([]), 800);
   };
 
   const handleBack = () => {
@@ -108,7 +134,9 @@ function App() {
     setBudget(75);
     setIngredients([]);
     setInputValue('');
-    setSelectedIngredients(MOCK_RECIPE.ingredients.map((_, i) => i));
+    setRecipe(null);
+    setSelectedIngredients([]);
+    setError(null);
   };
 
   const toggleIngredient = (index) => {
@@ -142,9 +170,18 @@ function App() {
         {/* INPUT SCREEN */}
         {screen === 'input' && (
           <div className="p-6 space-y-4 slide-up">
+            {error && (
+              <div
+                className="p-4 rounded-xl text-center font-dm-sans font-semibold"
+                style={{ backgroundColor: '#fee', color: LIDL_COLORS.red }}
+              >
+                {error}
+              </div>
+            )}
+
             {/* Budget Card */}
             <div
-              className="rounded-2xl p-5 transition-all duration-300"
+              className="rounded-2xl p-6 transition-all duration-300"
               style={{ backgroundColor: LIDL_COLORS.lightGray }}
             >
               <div className="flex items-center justify-between mb-3">
@@ -195,7 +232,7 @@ function App() {
 
             {/* Ingredients Card */}
             <div
-              className="rounded-2xl p-5"
+              className="rounded-2xl p-6"
               style={{ backgroundColor: LIDL_COLORS.lightGray }}
             >
               <div className="flex items-center gap-2 mb-3">
@@ -234,13 +271,13 @@ function App() {
             {/* Find Recipe Button */}
             <button
               onClick={handleFindRecipe}
-              disabled={!canSubmit}
+              disabled={!canSubmit || loading}
               className="w-full py-4 rounded-2xl font-nunito font-bold text-lg text-white transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed hover:scale-[1.02] active:scale-[0.98]"
               style={{
-                backgroundColor: canSubmit ? LIDL_COLORS.blue : '#ccc'
+                backgroundColor: canSubmit && !loading ? LIDL_COLORS.blue : '#ccc'
               }}
             >
-              Find My Recipe →
+              {loading ? 'Loading...' : 'Find My Recipe →'}
             </button>
 
             {/* Divider */}
@@ -253,13 +290,14 @@ function App() {
             {/* Surprise Me Button */}
             <button
               onClick={handleSurpriseMe}
-              className="w-full py-5 rounded-2xl font-nunito font-bold text-xl transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
+              disabled={loading}
+              className="w-full py-5 rounded-2xl font-nunito font-bold text-xl transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
               style={{
                 backgroundColor: LIDL_COLORS.yellow,
                 color: LIDL_COLORS.blue
               }}
             >
-              <span className={isSpinning ? 'spin-dice inline-block' : 'inline-block'}>🎲</span> Surprise Me!
+              <span className={isSpinning ? 'spin-dice inline-block' : 'inline-block'}>🎲</span> {loading ? 'Loading...' : 'Surprise Me!'}
             </button>
           </div>
         )}
@@ -289,34 +327,35 @@ function App() {
         )}
 
         {/* RESULT SCREEN */}
-        {screen === 'result' && (
+        {screen === 'result' && recipe && (
           <div className="p-6 space-y-5 slide-up">
             {/* Dish Name & Emoji */}
-            <div className="text-center">
+            <div className="text-center stagger-1 slide-up">
               <div
                 className="w-20 h-20 rounded-full mx-auto mb-3 flex items-center justify-center text-5xl"
                 style={{ backgroundColor: LIDL_COLORS.yellow }}
               >
-                {MOCK_RECIPE.emoji}
+                {recipe.heroEmoji}
               </div>
               <h2
                 className="font-nunito font-bold text-2xl"
                 style={{ color: LIDL_COLORS.blue }}
               >
-                {MOCK_RECIPE.name}
+                {recipe.dishName}
               </h2>
+              <p className="text-gray-600 text-sm mt-1">{recipe.funIntro}</p>
             </div>
 
             {/* Ingredient List */}
-            <div>
+            <div className="stagger-2 slide-up">
               <h3 className="font-nunito font-bold text-lg mb-3" style={{ color: LIDL_COLORS.blue }}>
                 🛒 Ingredients
               </h3>
               <div className="space-y-2">
-                {MOCK_RECIPE.ingredients.map((item, index) => (
+                {recipe.ingredients.map((item, index) => (
                   <div
                     key={index}
-                    className="p-3 rounded-xl border-2 transition-all duration-200"
+                    className="p-3 rounded-xl border-2 transition-all duration-200 ingredient-row"
                     style={{
                       backgroundColor: LIDL_COLORS.lightGray,
                       borderColor: selectedIngredients.includes(index) ? LIDL_COLORS.blue : 'transparent'
@@ -333,7 +372,7 @@ function App() {
                         <div className="flex items-start justify-between gap-2">
                           <div>
                             <p className="font-dm-sans font-semibold">{item.name}</p>
-                            <p className="text-xs text-gray-500 italic">{item.product}</p>
+                            <p className="text-xs text-gray-500 italic">{item.lidlProductName}</p>
                           </div>
                           <div className="text-right">
                             <p className="font-dm-sans font-bold">{item.price.toFixed(2)} DKK</p>
@@ -355,31 +394,40 @@ function App() {
             </div>
 
             {/* Add to List Button */}
-            <button
-              onClick={handleAddToList}
-              className="w-full py-4 rounded-2xl font-nunito font-semibold text-white transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
-              style={{ backgroundColor: LIDL_COLORS.blue }}
-            >
-              🛒 Add selected to Lidl Shopping List
-            </button>
+            <div className="stagger-3 slide-up relative">
+              {floatingEmojis.length > 0 && (
+                <div className="absolute inset-0 pointer-events-none">
+                  {floatingEmojis.map(item => (
+                    <FloatingEmoji key={item.id} emoji={item.emoji} delay={item.delay} />
+                  ))}
+                </div>
+              )}
+              <button
+                onClick={handleAddToList}
+                className="w-full py-4 rounded-2xl font-nunito font-semibold text-white transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+                style={{ backgroundColor: LIDL_COLORS.blue }}
+              >
+                🛒 Add selected to Lidl Shopping List
+              </button>
+            </div>
 
-            {/* Savings Banner */}
+            {/* Savings Banner - Full Bleed */}
             <div
-              className="p-4 rounded-2xl text-center shadow-md"
+              className="stagger-3 slide-up -mx-6 px-6 py-4 text-center shadow-md"
               style={{ backgroundColor: LIDL_COLORS.yellow }}
             >
               <p className="font-nunito font-bold text-lg" style={{ color: LIDL_COLORS.blue }}>
-                🎉 You save {MOCK_RECIPE.savings.toFixed(2)} DKK with today's deals!
+                🎉 You save {recipe.savings.toFixed(2)} DKK with today's deals!
               </p>
             </div>
 
             {/* Steps */}
-            <div>
+            <div className="stagger-4 slide-up">
               <h3 className="font-nunito font-bold text-lg mb-3" style={{ color: LIDL_COLORS.blue }}>
                 👨‍🍳 Step-by-Step Instructions
               </h3>
               <div className="space-y-3">
-                {MOCK_RECIPE.steps.map((step, index) => (
+                {recipe.steps.map((step, index) => (
                   <div key={index} className="flex gap-3">
                     <div
                       className="w-8 h-8 rounded-full flex items-center justify-center font-nunito font-bold text-white flex-shrink-0"
@@ -395,11 +443,11 @@ function App() {
 
             {/* Total Cost */}
             <div
-              className="p-4 rounded-2xl"
+              className="stagger-5 slide-up p-4 rounded-2xl"
               style={{ backgroundColor: LIDL_COLORS.lightGray }}
             >
               <p className="font-nunito font-bold text-xl" style={{ color: LIDL_COLORS.blue }}>
-                Total estimated cost: {MOCK_RECIPE.totalCost.toFixed(2)} DKK
+                Total estimated cost: {recipe.totalCost.toFixed(2)} DKK
               </p>
               <p className="text-xs text-gray-500 mt-1">Prices based on current Lidl store offers</p>
             </div>
