@@ -72,6 +72,8 @@ function App() {
         setFactIndex(prev => (prev + 1) % FUN_FACTS.length);
       }, 800);
 
+      console.log('Frontend: Calling /api/recipe with:', { budgetVal, ingredientsCount: ingredientsList?.length, isSurpriseMe });
+
       const response = await fetch('/api/recipe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -82,11 +84,17 @@ function App() {
         }),
       });
 
+      console.log('Frontend: Response status:', response.status);
+
       if (!response.ok) {
-        throw new Error('Failed to fetch recipe');
+        const errorData = await response.json();
+        console.error('Frontend: API error response:', errorData);
+        throw new Error(`API returned ${response.status}: ${errorData.error}`);
       }
 
       const data = await response.json();
+      console.log('Frontend: Recipe received:', { dishName: data.dishName, ingredientCount: data.ingredients?.length });
+
       setRecipe(data);
       setSelectedIngredients(data.ingredients.map((_, i) => i));
 
@@ -97,10 +105,12 @@ function App() {
       }, 2500);
     } catch (err) {
       clearInterval();
+      console.error('Frontend: FULL ERROR:', err);
+      console.error('Frontend: Error message:', err?.message);
+      console.error('Frontend: Error stack:', err?.stack);
       setError('Oops, our chef is taking a break! 🍳 Try again.');
       setLoading(false);
       setScreen('input');
-      console.error('API Error:', err);
     }
   };
 

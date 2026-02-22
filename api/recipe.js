@@ -1,8 +1,13 @@
 import Groq from 'groq-sdk';
 
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY,
-});
+console.log('API KEY EXISTS:', !!process.env.GROQ_API_KEY);
+console.log('API KEY (first 20 chars):', process.env.GROQ_API_KEY?.slice(0, 20) || 'MISSING');
+
+const apiKey = process.env.GROQ_API_KEY;
+
+if (!apiKey) {
+  console.error('CRITICAL: GROQ_API_KEY is not set in environment variables!');
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -10,31 +15,27 @@ export default async function handler(req, res) {
   }
 
   try {
+    if (!apiKey) {
+      throw new Error('GROQ_API_KEY environment variable is not set');
+    }
+
+    const groq = new Groq({
+      apiKey: apiKey,
+    });
+
     const { budget, ingredients, surpriseMe } = req.body;
 
-    const systemPrompt = `You are MyLidlChef, a fun cooking assistant for the Lidl+ app in Denmark.
-Given a budget (DKK), available ingredients, or a surprise request, return ONLY raw JSON — no markdown, no explanation.
+    const systemPrompt = `You are a JSON-only API. NEVER output markdown, code blocks (no backticks), or explanations.
+Return ONLY raw JSON with exactly these fields:
+- dishName: string (Danish recipe name)
+- heroEmoji: one food emoji only
+- funIntro: string (max 15 words, encouraging)
+- ingredients: array of 5-7 objects with name, lidlProductName, price (number), onSale (boolean), checked (true)
+- steps: array of 4-6 instruction strings
+- totalCost: number (sum of prices)
+- savings: number (approx 25% of sale items)
 
-Return this structure:
-{
-  "dishName": "string",
-  "heroEmoji": "one food emoji",
-  "funIntro": "one fun encouraging sentence, max 15 words",
-  "ingredients": [
-    {
-      "name": "ingredient + quantity e.g. 'Pasta 500g'",
-      "lidlProductName": "fictional Lidl brand name — use prefixes like Lidl Favorit, Pikok, Milbona, Combino, Fairglobe",
-      "price": number in DKK,
-      "onSale": boolean,
-      "checked": true
-    }
-  ],
-  "steps": ["step 1", "step 2", ...],
-  "totalCost": number,
-  "savings": number
-}
-
-Rules: 5–7 ingredients, 2–3 onSale. Realistic Danish DKK prices. totalCost = sum of prices. savings = total discount from sale items (~25% off). 4–6 beginner-friendly steps. Stay under budget if given. Use provided ingredients where possible. Always healthy.`;
+Use realistic Danish DKK prices. Include 2-3 sale items. Use fictional Lidl brands (Favorit, Pikok, Milbona, Combino, Fairglobe). Always healthy recipes. Stay under budget if given. Use provided ingredients where possible.`;
 
     let userPrompt = '';
     if (surpriseMe) {
@@ -46,11 +47,16 @@ Rules: 5–7 ingredients, 2–3 onSale. Realistic Danish DKK prices. totalCost =
       userPrompt = parts.length > 0 ? parts.join('. ') : 'Create a healthy recipe for me';
     }
 
-    const message = await groq.messages.create({
+    console.log('Calling Groq API with:', { budget, ingredientsCount: ingredients?.length || 0, surpriseMe });
+
+    const message = await groq.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
       max_tokens: 1024,
-      system: systemPrompt,
       messages: [
+        {
+          role: 'system',
+          content: systemPrompt,
+        },
         {
           role: 'user',
           content: userPrompt,
@@ -58,14 +64,26 @@ Rules: 5–7 ingredients, 2–3 onSale. Realistic Danish DKK prices. totalCost =
       ],
     });
 
-    const content = message.content[0].type === 'text' ? message.content[0].text : '';
+    console.log('Groq response received:', { stopReason: message.choices[0]?.finish_reason, contentType: 'text' });
+
+    let content = message.choices[0].message?.content || '';
+    content = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+    console.log('Parsing recipe JSON...');
     const recipe = JSON.parse(content);
+
+    console.log('Recipe parsed successfully:', { dishName: recipe.dishName, ingredientCount: recipe.ingredients?.length });
 
     return res.status(200).json(recipe);
   } catch (error) {
-    console.error('Error calling Groq API:', error);
+    console.error('FULL ERROR OBJECT:', error);
+    console.error('Error message:', error?.message);
+    console.error('Error status:', error?.status);
+    console.error('Error response:', error?.response);
+    console.error('Error code:', error?.code);
+
     return res.status(500).json({
       error: 'Oops, our chef is taking a break! 🍳 Try again.',
+      details: process.env.NODE_ENV === 'development' ? error?.message : undefined,
     });
   }
 }
